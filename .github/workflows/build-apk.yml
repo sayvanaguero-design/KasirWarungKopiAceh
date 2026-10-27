@@ -38,14 +38,64 @@ jobs:
       - name: Extract project
         run: unzip KasirWarungKopiAceh-source.zip -d extracted
 
-      - name: Fix Java target
+      - name: Fix Java and Kotlin targets
         run: |
-          FILE="extracted/KasirWarungKopiAceh/app/build.gradle.kts"
-          if [ ! -f "$FILE" ]; then
-            echo "File build.gradle.kts tidak ditemukan"
-            exit 1
-          fi
-          sed -i 's/JavaVersion.VERSION_1_8/JavaVersion.VERSION_17/g' "$FILE"
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("extracted/KasirWarungKopiAceh/app/build.gradle.kts")
+          if not p.is_file():
+              raise SystemExit(f"File tidak ditemukan: {p}")
+
+          s = p.read_text()
+
+          # Set Java source and target compatibility to Java 17.
+          s = re.sub(
+              r'JavaVersion\.VERSION_1_[0-9]+',
+              'JavaVersion.VERSION_17',
+              s
+          )
+
+          # Update existing Kotlin JVM target declarations to 17.
+          s = re.sub(
+              r'jvmTarget\s*=\s*["\'][^"\']+["\']',
+              'jvmTarget = "17"',
+              s
+          )
+
+          # Ensure compileOptions exists inside the android block.
+          if not re.search(r'compileOptions\s*\{', s):
+              android_match = re.search(r'android\s*\{', s)
+              if not android_match:
+                  raise SystemExit("Blok android { } tidak ditemukan.")
+              start = android_match.end()
+              s = s[:start] + """
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+          """ + s[start:]
+          else:
+              s = re.sub(
+                  r'sourceCompatibility\s*=\s*JavaVersion\.[A-Z0-9_]+',
+                  'sourceCompatibility = JavaVersion.VERSION_17',
+                  s
+              )
+              s = re.sub(
+                  r'targetCompatibility\s*=\s*JavaVersion\.[A-Z0-9_]+',
+                  'targetCompatibility = JavaVersion.VERSION_17',
+                  s
+              )
+
+          # If Kotlin options already exist, the target is set above.
+          p.write_text(s)
+          print("File Gradle berhasil diperbarui.")
+          PY
+
+      - name: Verify JVM targets
+        run: |
+          grep -nE 'compileOptions|sourceCompatibility|targetCompatibility|kotlinOptions|jvmTarget' extracted/KasirWarungKopiAceh/app/build.gradle.kts || true
 
       - name: Build APK
         run: gradle -p extracted/KasirWarungKopiAceh :app:assembleDebug
